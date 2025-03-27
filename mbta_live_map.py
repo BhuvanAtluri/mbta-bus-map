@@ -51,4 +51,7 @@ bus_data = get_bus_data()
 route_colors = get_route_colors()
 
 # Extract filter options
-all_routes_
+# Extract filter options from bus data
+all_routes = sorted({v["relationships"]["route"]["data"]["id"] for v in bus_data["data"]})
+all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data"]})
+
