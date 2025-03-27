@@ -50,8 +50,10 @@ def get_prediction(vehicle_id):
 bus_data = get_bus_data()
 route_colors = get_route_colors()
 
-# Extract filter options
-# Extract filter options from bus data
+# ✅ Extract filter options
 all_routes = sorted({v["relationships"]["route"]["data"]["id"] for v in bus_data["data"]})
 all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data"]})
 
+# ✅ Sidebar filters
+selected_routes = st.sidebar.multiselect("Select Routes", all_routes, default=all_routes)
+selected_statuses = st.sidebar.multiselect("Select Statuses", all_statuses, default=all_statuses)
