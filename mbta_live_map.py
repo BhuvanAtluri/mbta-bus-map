@@ -3,70 +3,52 @@ import requests
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="Live MBTA Bus Tracker", layout="wide")
+st.set_page_config(page_title="MBTA Live Bus Tracker", layout="wide")
 
-st.title("🚍 Live MBTA Bus Tracker")
-st.markdown("Real-time MBTA bus map with route filters and color-coded markers.")
+st.title("🚍 MBTA Live Bus Tracker")
+st.markdown("Real-time MBTA bus locations with route filtering and live tracking.")
 
-# Sidebar: refresh + filters
+# Sidebar refresh + filters
 refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
 st.sidebar.header("🔍 Filter Options")
 
-# --- Data Fetching ---
+# Fetch live vehicle data
 @st.cache_data(ttl=refresh_interval)
 def get_bus_data():
     url = "https://api-v3.mbta.com/vehicles?filter[route_type]=3"
     return requests.get(url).json()
 
+# Fetch route color data
 @st.cache_data(ttl=3600)
 def get_route_colors():
     url = "https://api-v3.mbta.com/routes?filter[type]=3"
-    routes_data = requests.get(url).json()
+    routes = requests.get(url).json()
     return {
-        route["id"]: f'#{route["attributes"]["color"]}'
-        for route in routes_data["data"]
+        route["id"]: f'#{route["attributes"]["color"]}' for route in routes["data"]
     }
+
+# Fetch stop info by ID
+@st.cache_data(ttl=3600)
+def get_stop_name(stop_id):
+    if not stop_id:
+        return "Unknown"
+    url = f"https://api-v3.mbta.com/stops/{stop_id}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()["data"]["attributes"]["name"]
+    return "Unknown"
+
+# Get arrival prediction
+def get_prediction(vehicle_id):
+    url = f"https://api-v3.mbta.com/predictions?filter[vehicle]={vehicle_id}"
+    r = requests.get(url)
+    if r.status_code == 200 and r.json()["data"]:
+        pred = r.json()["data"][0]["attributes"]
+        return pred["arrival_time"]
+    return None
 
 bus_data = get_bus_data()
 route_colors = get_route_colors()
 
-# Extract route list and statuses from live bus data
-all_routes = sorted({v["relationships"]["route"]["data"]["id"] for v in bus_data["data"]})
-all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data"]})
-
-# Filters
-selected_routes = st.sidebar.multiselect("Select Routes", all_routes, default=all_routes)
-selected_statuses = st.sidebar.multiselect("Select Statuses", all_statuses, default=all_statuses)
-
-# --- Map Setup ---
-m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
-
-# --- Add Buses ---
-for vehicle in bus_data["data"]:
-    attr = vehicle["attributes"]
-    route_id = vehicle["relationships"]["route"]["data"]["id"]
-    status = attr["current_status"]
-
-    if route_id not in selected_routes or status not in selected_statuses:
-        continue
-
-    color = route_colors.get(route_id, "#0000FF")  # fallback to blue
-    label = f"Route {route_id} | Bus {attr['label']} | {status}"
-
-    folium.CircleMarker(
-        location=[attr["latitude"], attr["longitude"]],
-        radius=7,
-        color=color,
-        fill=True,
-        fill_color=color,
-        fill_opacity=0.8,
-        popup=label,
-        tooltip=label
-    ).add_to(m)
-
-# Display map
-st_folium(m, width=1000, height=600)
-
-# Refresh page
-st.rerun()
-
+# Extract filter options
+all_routes_
