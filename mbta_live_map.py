@@ -68,4 +68,5 @@ for vehicle in bus_data["data"]:
 st_folium(m, width=1000, height=600)
 
 # Refresh page
-st.experimental_rerun()
+st.rerun()
+
