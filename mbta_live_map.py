@@ -32,10 +32,10 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-# Default refresh interval (used before slider renders)
-refresh_interval = 30
+# Set default refresh interval for cache
+default_refresh_interval = 30
 
-@st.cache_data(ttl=refresh_interval)
+@st.cache_data(ttl=default_refresh_interval)
 def get_bus_data():
     r = fetch_mbta("/vehicles", params={"filter[route_type]": 3})
     return r.json()
@@ -52,7 +52,7 @@ def get_stop_name(stop_id):
     if not stop_id:
         return "Unknown"
     r = fetch_mbta(f"/stops/{stop_id}")
-    if r.status_code == 200:
+    if r.status_code == 200 and r.json().get("data"):
         return r.json()["data"]["attributes"]["name"]
     return "Unknown"
 
@@ -79,9 +79,9 @@ def get_route_stops(route_id):
         for s in r.json()["data"]
     ]
 
-# --- Sidebar Controls ---
+# --- Sidebar UI ---
 st.sidebar.header("🔍 Filter Options")
-refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, refresh_interval)
+refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, default_refresh_interval)
 
 bus_data = get_bus_data()
 route_colors = get_route_colors()
@@ -102,7 +102,7 @@ selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bu
 # --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Bus Markers ---
+# --- Plot All Bus Markers ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
     route_id = vehicle["relationships"]["route"]["data"]["id"]
@@ -115,9 +115,8 @@ for vehicle in bus_data["data"]:
     arrow = bearing_to_arrow(attr.get("bearing"))
     stop_id = attr.get("stop_id")
     stop_name = get_stop_name(stop_id)
-    stop_label = stop_name or "Unknown"
 
-    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | {stop_label}"
+    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | {stop_name}"
 
     html = f"""
     <div style="
@@ -141,7 +140,7 @@ for vehicle in bus_data["data"]:
         tooltip=tooltip_text
     ).add_to(m)
 
-# --- Highlight Route + Stops if Bus Selected ---
+# --- If Bus Selected: Highlight Route + Stops ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
@@ -153,11 +152,11 @@ if selected_bus_label != "None":
         stop_name = get_stop_name(stop_id)
         prediction_time = get_prediction(bus_id)
 
-        # Draw route shape
+        # Draw route line
         shape_coords = get_route_shape(route_id)
         folium.PolyLine(shape_coords, color="blue", weight=4, opacity=0.7).add_to(m)
 
-        # Add route stops
+        # Plot all stops
         for lat, lon, name in get_route_stops(route_id):
             folium.CircleMarker(
                 location=[lat, lon],
@@ -168,7 +167,7 @@ if selected_bus_label != "None":
                 tooltip=name
             ).add_to(m)
 
-        # Sidebar info
+        # Show sidebar details
         st.sidebar.markdown("### 🛰️ Bus Details")
         st.sidebar.write(f"**Bus ID:** {bus['id']}")
         st.sidebar.write(f"**Route:** {route_id}")
@@ -176,5 +175,5 @@ if selected_bus_label != "None":
         st.sidebar.write(f"**Next Stop:** {stop_name}")
         st.sidebar.write(f"**Arrival Time:** {prediction_time if prediction_time else 'N/A'}")
 
-# --- Show Map ---
+# --- Display the Map ---
 st_folium(m, width="100%", height=800)
