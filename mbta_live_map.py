@@ -32,7 +32,10 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-@st.cache_data(ttl=refresh_interval := 30)
+# Default refresh interval (used before slider renders)
+refresh_interval = 30
+
+@st.cache_data(ttl=refresh_interval)
 def get_bus_data():
     r = fetch_mbta("/vehicles", params={"filter[route_type]": 3})
     return r.json()
@@ -76,9 +79,10 @@ def get_route_stops(route_id):
         for s in r.json()["data"]
     ]
 
-# --- Filters ---
+# --- Sidebar Controls ---
 st.sidebar.header("🔍 Filter Options")
-refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
+refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, refresh_interval)
+
 bus_data = get_bus_data()
 route_colors = get_route_colors()
 
@@ -137,7 +141,7 @@ for vehicle in bus_data["data"]:
         tooltip=tooltip_text
     ).add_to(m)
 
-# --- Highlight Route if Bus Selected ---
+# --- Highlight Route + Stops if Bus Selected ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
@@ -149,11 +153,11 @@ if selected_bus_label != "None":
         stop_name = get_stop_name(stop_id)
         prediction_time = get_prediction(bus_id)
 
-        # 🔵 Draw Route Shape
+        # Draw route shape
         shape_coords = get_route_shape(route_id)
         folium.PolyLine(shape_coords, color="blue", weight=4, opacity=0.7).add_to(m)
 
-        # ⚪ Add Stops
+        # Add route stops
         for lat, lon, name in get_route_stops(route_id):
             folium.CircleMarker(
                 location=[lat, lon],
@@ -164,7 +168,7 @@ if selected_bus_label != "None":
                 tooltip=name
             ).add_to(m)
 
-        # 🛰 Sidebar Info
+        # Sidebar info
         st.sidebar.markdown("### 🛰️ Bus Details")
         st.sidebar.write(f"**Bus ID:** {bus['id']}")
         st.sidebar.write(f"**Route:** {route_id}")
