@@ -8,7 +8,7 @@ st.set_page_config(page_title="MBTA Live Bus Tracker", layout="wide")
 st.title("🚍 MBTA Live Bus Tracker")
 st.markdown("Real-time MBTA bus locations with route filters and live tracking.")
 
-# --- MBTA API Key ---
+# --- MBTA API ---
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
 
@@ -19,7 +19,6 @@ def fetch_mbta(endpoint, params=None):
     url = f"{BASE_URL}{endpoint}"
     return requests.get(url, params=params)
 
-# --- Helpers ---
 def bearing_to_arrow(bearing):
     if bearing is None:
         return "•"
@@ -32,39 +31,6 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-# Get stop name by ID
-@st.cache_data(ttl=3600)
-def get_stop_name(stop_id):
-    if not stop_id:
-        return "Unknown"
-    try:
-        r = fetch_mbta(f"/stops/{stop_id}")
-        data = r.json().get("data", {})
-        if data and "attributes" in data:
-            return data["attributes"]["name"]
-    except Exception:
-        pass
-    return "Unknown"
-
-# Get next stop from predictions
-def get_next_stop(vehicle_id):
-    r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id, "include": "stop"})
-    data = r.json()
-    if data.get("data"):
-        prediction = data["data"][0]
-        stop = prediction.get("relationships", {}).get("stop", {}).get("data", {})
-        stop_id = stop.get("id")
-        stop_name = get_stop_name(stop_id)
-        return stop_id, stop_name
-    return None, "Unknown"
-
-@st.cache_data(ttl=3600)
-def get_prediction(vehicle_id):
-    r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id})
-    if r.status_code == 200 and r.json()["data"]:
-        return r.json()["data"][0]["attributes"]["arrival_time"]
-    return None
-
 @st.cache_data(ttl=3600)
 def get_route_colors():
     r = fetch_mbta("/routes", params={"filter[type]": 3})
@@ -73,23 +39,60 @@ def get_route_colors():
     }
 
 @st.cache_data(ttl=3600)
+def get_stop_name(stop_id):
+    if not stop_id:
+        return "Unknown"
+    try:
+        r = fetch_mbta(f"/stops/{stop_id}")
+        data = r.json().get("data", {})
+        return data.get("attributes", {}).get("name", "Unknown")
+    except Exception:
+        return "Unknown"
+
+def get_next_stop(vehicle_id):
+    try:
+        r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id, "include": "stop"})
+        data = r.json()
+        if data.get("data"):
+            stop = data["data"][0]["relationships"]["stop"]["data"]
+            stop_id = stop.get("id") if stop else None
+            return stop_id, get_stop_name(stop_id)
+    except Exception:
+        pass
+    return None, "Unknown"
+
+@st.cache_data(ttl=3600)
+def get_prediction(vehicle_id):
+    try:
+        r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id})
+        if r.status_code == 200 and r.json()["data"]:
+            return r.json()["data"][0]["attributes"]["arrival_time"]
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=3600)
 def get_route_shape(route_id):
-    r = fetch_mbta("/shapes", params={"filter[route]": route_id, "page[limit]": 1000})
-    shape_points = []
-    for shape in r.json()["data"]:
-        lat = shape["attributes"].get("shape_pt_lat")
-        lon = shape["attributes"].get("shape_pt_lon")
-        if lat and lon:
-            shape_points.append((lat, lon))
-    return shape_points
+    try:
+        r = fetch_mbta("/shapes", params={"filter[route]": route_id, "page[limit]": 1000})
+        return [
+            (s["attributes"]["shape_pt_lat"], s["attributes"]["shape_pt_lon"])
+            for s in r.json()["data"]
+            if s["attributes"].get("shape_pt_lat") and s["attributes"].get("shape_pt_lon")
+        ]
+    except Exception:
+        return []
 
 @st.cache_data(ttl=3600)
 def get_route_stops(route_id):
-    r = fetch_mbta("/stops", params={"filter[route]": route_id})
-    return [
-        (s["attributes"]["latitude"], s["attributes"]["longitude"], s["attributes"]["name"])
-        for s in r.json()["data"]
-    ]
+    try:
+        r = fetch_mbta("/stops", params={"filter[route]": route_id})
+        return [
+            (s["attributes"]["latitude"], s["attributes"]["longitude"], s["attributes"]["name"])
+            for s in r.json()["data"]
+        ]
+    except Exception:
+        return []
 
 # --- Sidebar UI ---
 st.sidebar.header("🔍 Filter Options")
@@ -103,36 +106,40 @@ def get_bus_data():
 bus_data = get_bus_data()
 route_colors = get_route_colors()
 
-all_routes = sorted({v["relationships"]["route"]["data"]["id"] for v in bus_data["data"]})
+# Build list of available route/status options
+all_routes = sorted({v.get("relationships", {}).get("route", {}).get("data", {}).get("id") for v in bus_data["data"] if v.get("relationships", {}).get("route", {}).get("data")})
 all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data"]})
 
 selected_routes = st.sidebar.multiselect("Select Routes", all_routes, default=all_routes)
 selected_statuses = st.sidebar.multiselect("Select Statuses", all_statuses, default=all_statuses)
 
-bus_choices = {
-    f'Bus {v["attributes"]["label"]} (Route {v["relationships"]["route"]["data"]["id"]})': v["id"]
-    for v in bus_data["data"]
-    if v["relationships"]["route"]["data"]["id"] in selected_routes
-}
+# ✅ Safe bus selection (no KeyErrors)
+bus_choices = {}
+for v in bus_data["data"]:
+    route_data = v.get("relationships", {}).get("route", {}).get("data")
+    route_id = route_data.get("id") if route_data else None
+    if route_id and route_id in selected_routes:
+        label = v["attributes"].get("label", "?")
+        bus_choices[f'Bus {label} (Route {route_id})'] = v["id"]
+
 selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bus_choices.keys()))
 
 # --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Plot All Bus Markers ---
+# --- Add Markers (no slow lookups here!) ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
-    route_id = vehicle["relationships"]["route"]["data"]["id"]
+    route_data = vehicle.get("relationships", {}).get("route", {}).get("data")
+    route_id = route_data.get("id") if route_data else None
     status = attr["current_status"]
 
-    if route_id not in selected_routes or status not in selected_statuses:
+    if not route_id or route_id not in selected_routes or status not in selected_statuses:
         continue
 
-    label = route_id
     arrow = bearing_to_arrow(attr.get("bearing"))
-    stop_id, stop_name = get_next_stop(vehicle["id"])
-
-    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | Stop ID: {stop_id or 'None'} | {stop_name}"
+    label = route_id
+    tooltip = f"Route {route_id} | Bus {attr.get('label') or '?'} | {status}"
 
     html = f"""
     <div style="
@@ -153,23 +160,26 @@ for vehicle in bus_data["data"]:
     folium.Marker(
         [attr["latitude"], attr["longitude"]],
         icon=folium.DivIcon(html=html),
-        tooltip=tooltip_text
+        tooltip=tooltip
     ).add_to(m)
 
-# --- If Bus Selected: Highlight Route + Stops ---
+# --- If a bus is selected, show route + stops ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
 
     if bus:
         attr = bus["attributes"]
-        route_id = bus["relationships"]["route"]["data"]["id"]
-        stop_id, stop_name = get_next_stop(bus["id"])
-        prediction_time = get_prediction(bus["id"])
+        route_data = bus["relationships"]["route"]["data"]
+        route_id = route_data.get("id") if route_data else None
+        stop_id, stop_name = get_next_stop(bus_id)
+        prediction_time = get_prediction(bus_id)
 
         shape_coords = get_route_shape(route_id)
         if shape_coords:
             folium.PolyLine(shape_coords, color="blue", weight=4, opacity=0.7).add_to(m)
+        else:
+            st.warning(f"No shape data for route {route_id}")
 
         for lat, lon, name in get_route_stops(route_id):
             folium.CircleMarker(
@@ -181,6 +191,7 @@ if selected_bus_label != "None":
                 tooltip=name
             ).add_to(m)
 
+        # Sidebar details
         st.sidebar.markdown("### 🛰️ Bus Details")
         st.sidebar.write(f"**Bus ID:** {bus['id']}")
         st.sidebar.write(f"**Route:** {route_id}")
@@ -188,5 +199,5 @@ if selected_bus_label != "None":
         st.sidebar.write(f"**Next Stop:** {stop_name}")
         st.sidebar.write(f"**Arrival Time:** {prediction_time if prediction_time else 'N/A'}")
 
-# --- Show Map ---
+# --- Show the map ---
 st_folium(m, width="100%", height=800)
