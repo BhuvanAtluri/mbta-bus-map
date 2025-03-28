@@ -86,7 +86,7 @@ selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bu
 # --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Buses with Orange Dot + Arrow + Route Number ---
+# --- Add Buses with Smart Tooltips ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
     route_id = vehicle["relationships"]["route"]["data"]["id"]
@@ -97,6 +97,16 @@ for vehicle in bus_data["data"]:
 
     label = route_id
     arrow = bearing_to_arrow(attr.get("bearing"))
+    stop_id = attr.get("stop_id")
+    stop_name = get_stop_name(stop_id)
+
+    # Smart tooltip message
+    if status == "STOPPED_AT":
+        stop_label = f"Stopped at – {stop_name}"
+    else:
+        stop_label = f"Next Stop – {stop_name}"
+
+    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | {stop_label}"
 
     html = f"""
     <div style="
@@ -117,13 +127,13 @@ for vehicle in bus_data["data"]:
     folium.Marker(
         [attr["latitude"], attr["longitude"]],
         icon=folium.DivIcon(html=html),
-        tooltip=f"Route {route_id} | Bus {attr['label'] or '?'} | {status}"
+        tooltip=tooltip_text
     ).add_to(m)
 
-# --- Show Map ---
-st_folium(m, width=1400, height=1000)
+# --- Show Map (larger) ---
+st_folium(m, width="100%", height=800)
 
-# --- Show Bus Info in Sidebar ---
+# --- Show Sidebar Details ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
