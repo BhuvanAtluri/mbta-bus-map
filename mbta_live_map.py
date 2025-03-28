@@ -51,9 +51,13 @@ def get_route_colors():
 def get_stop_name(stop_id):
     if not stop_id:
         return "Unknown"
-    r = fetch_mbta(f"/stops/{stop_id}")
-    if r.status_code == 200 and r.json().get("data"):
-        return r.json()["data"]["attributes"]["name"]
+    try:
+        r = fetch_mbta(f"/stops/{stop_id}")
+        data = r.json().get("data", {})
+        if data and "attributes" in data:
+            return data["attributes"]["name"]
+    except Exception:
+        pass
     return "Unknown"
 
 @st.cache_data(ttl=3600)
@@ -65,11 +69,14 @@ def get_prediction(vehicle_id):
 
 @st.cache_data(ttl=3600)
 def get_route_shape(route_id):
-    r = fetch_mbta("/shapes", params={"filter[route]": route_id})
-    return [
-        (s["attributes"]["latitude"], s["attributes"]["longitude"])
-        for s in r.json()["data"]
-    ]
+    r = fetch_mbta("/shapes", params={"filter[route]": route_id, "page[limit]": 1000})
+    shape_points = []
+    for shape in r.json()["data"]:
+        lat = shape["attributes"].get("shape_pt_lat")
+        lon = shape["attributes"].get("shape_pt_lon")
+        if lat and lon:
+            shape_points.append((lat, lon))
+    return shape_points
 
 @st.cache_data(ttl=3600)
 def get_route_stops(route_id):
@@ -116,7 +123,8 @@ for vehicle in bus_data["data"]:
     stop_id = attr.get("stop_id")
     stop_name = get_stop_name(stop_id)
 
-    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | {stop_name}"
+    # ✅ Tooltip now includes stop_id
+    tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | Stop ID: {stop_id or 'None'} | {stop_name}"
 
     html = f"""
     <div style="
