@@ -6,13 +6,26 @@ from streamlit_folium import st_folium
 st.set_page_config(page_title="MBTA Live Bus Tracker", layout="wide")
 
 st.title("🚍 MBTA Live Bus Tracker")
-st.markdown("Real-time MBTA bus locations with route filtering and live tracking.")
+st.markdown("Real-time MBTA bus locations with route filters, directions, and next stop tracking.")
 
-# Sidebar: refresh and filters
+# Sidebar: refresh + filters
 refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
 st.sidebar.header("🔍 Filter Options")
 
-# --- API Fetching Functions ---
+# --- Helper: Convert bearing to arrow symbol ---
+def bearing_to_arrow(bearing):
+    if bearing is None:
+        return "•"
+    directions = [
+        (22.5, "↑"), (67.5, "↗"), (112.5, "→"), (157.5, "↘"),
+        (202.5, "↓"), (247.5, "↙"), (292.5, "←"), (337.5, "↖"), (360, "↑")
+    ]
+    for angle, arrow in directions:
+        if bearing <= angle:
+            return arrow
+    return "↑"
+
+# --- API functions ---
 @st.cache_data(ttl=refresh_interval)
 def get_bus_data():
     url = "https://api-v3.mbta.com/vehicles?filter[route_type]=3"
@@ -21,9 +34,9 @@ def get_bus_data():
 @st.cache_data(ttl=3600)
 def get_route_colors():
     url = "https://api-v3.mbta.com/routes?filter[type]=3"
-    routes = requests.get(url).json()
+    data = requests.get(url).json()
     return {
-        route["id"]: f'#{route["attributes"]["color"]}' for route in routes["data"]
+        route["id"]: f'#{route["attributes"]["color"]}' for route in data["data"]
     }
 
 @st.cache_data(ttl=3600)
@@ -44,18 +57,18 @@ def get_prediction(vehicle_id):
         return pred["arrival_time"]
     return None
 
-# --- Get Data ---
+# --- Load data ---
 bus_data = get_bus_data()
 route_colors = get_route_colors()
 
-# --- Filters ---
+# --- Sidebar filters ---
 all_routes = sorted({v["relationships"]["route"]["data"]["id"] for v in bus_data["data"]})
 all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data"]})
 
 selected_routes = st.sidebar.multiselect("Select Routes", all_routes, default=all_routes)
 selected_statuses = st.sidebar.multiselect("Select Statuses", all_statuses, default=all_statuses)
 
-# --- Bus Selector ---
+# --- Bus tracking dropdown ---
 bus_choices = {
     f'Bus {v["attributes"]["label"]} (Route {v["relationships"]["route"]["data"]["id"]})': v["id"]
     for v in bus_data["data"]
@@ -63,10 +76,10 @@ bus_choices = {
 }
 selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bus_choices.keys()))
 
-# --- Initialize Map ---
+# --- Create map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Bus Markers ---
+# --- Add bus markers with number + direction ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
     route_id = vehicle["relationships"]["route"]["data"]["id"]
@@ -76,28 +89,24 @@ for vehicle in bus_data["data"]:
         continue
 
     color = route_colors.get(route_id, "#0000FF")
-    label = f"Route {route_id} | Bus {attr['label']} | {status}"
+    label = attr["label"] or "?"
+    arrow = bearing_to_arrow(attr.get("bearing"))
 
-    popup_text = f"""
-    <strong>{label}</strong><br>
-    Vehicle ID: {vehicle["id"]}
-    """
-
-    folium.CircleMarker(
-        location=[attr["latitude"], attr["longitude"]],
-        radius=7,
-        color=color,
-        fill=True,
-        fill_color=color,
-        fill_opacity=0.8,
-        popup=popup_text,
-        tooltip=label
+    folium.Marker(
+        [attr["latitude"], attr["longitude"]],
+        icon=folium.DivIcon(html=f"""
+            <div style="font-size: 11px; font-weight: bold;
+                        color: {color}; text-align: center;">
+                {arrow} {label}
+            </div>
+        """),
+        tooltip=f"Route {route_id} | Bus {label} | {status}"
     ).add_to(m)
 
-# --- Show Map ---
-st_data = st_folium(m, width=1000, height=600)
+# --- Show map ---
+st_folium(m, width=1000, height=600)
 
-# --- Bus Tracking Sidebar ---
+# --- Show selected bus info ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
