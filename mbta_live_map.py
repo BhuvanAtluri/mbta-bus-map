@@ -32,21 +32,7 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-# Set default refresh interval for cache
-default_refresh_interval = 30
-
-@st.cache_data(ttl=default_refresh_interval)
-def get_bus_data():
-    r = fetch_mbta("/vehicles", params={"filter[route_type]": 3})
-    return r.json()
-
-@st.cache_data(ttl=3600)
-def get_route_colors():
-    r = fetch_mbta("/routes", params={"filter[type]": 3})
-    return {
-        route["id"]: f'#{route["attributes"]["color"]}' for route in r.json()["data"]
-    }
-
+# Get stop name by ID
 @st.cache_data(ttl=3600)
 def get_stop_name(stop_id):
     if not stop_id:
@@ -60,12 +46,31 @@ def get_stop_name(stop_id):
         pass
     return "Unknown"
 
+# Get next stop from predictions
+def get_next_stop(vehicle_id):
+    r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id, "include": "stop"})
+    data = r.json()
+    if data.get("data"):
+        prediction = data["data"][0]
+        stop = prediction.get("relationships", {}).get("stop", {}).get("data", {})
+        stop_id = stop.get("id")
+        stop_name = get_stop_name(stop_id)
+        return stop_id, stop_name
+    return None, "Unknown"
+
 @st.cache_data(ttl=3600)
 def get_prediction(vehicle_id):
     r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id})
     if r.status_code == 200 and r.json()["data"]:
         return r.json()["data"][0]["attributes"]["arrival_time"]
     return None
+
+@st.cache_data(ttl=3600)
+def get_route_colors():
+    r = fetch_mbta("/routes", params={"filter[type]": 3})
+    return {
+        route["id"]: f'#{route["attributes"]["color"]}' for route in r.json()["data"]
+    }
 
 @st.cache_data(ttl=3600)
 def get_route_shape(route_id):
@@ -88,7 +93,12 @@ def get_route_stops(route_id):
 
 # --- Sidebar UI ---
 st.sidebar.header("🔍 Filter Options")
-refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, default_refresh_interval)
+refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
+
+@st.cache_data(ttl=refresh_interval)
+def get_bus_data():
+    r = fetch_mbta("/vehicles", params={"filter[route_type]": 3})
+    return r.json()
 
 bus_data = get_bus_data()
 route_colors = get_route_colors()
@@ -120,10 +130,8 @@ for vehicle in bus_data["data"]:
 
     label = route_id
     arrow = bearing_to_arrow(attr.get("bearing"))
-    stop_id = attr.get("stop_id")
-    stop_name = get_stop_name(stop_id)
+    stop_id, stop_name = get_next_stop(vehicle["id"])
 
-    # ✅ Tooltip now includes stop_id
     tooltip_text = f"Route {route_id} | Bus {attr['label'] or '?'} | {status} | Stop ID: {stop_id or 'None'} | {stop_name}"
 
     html = f"""
@@ -156,15 +164,13 @@ if selected_bus_label != "None":
     if bus:
         attr = bus["attributes"]
         route_id = bus["relationships"]["route"]["data"]["id"]
-        stop_id = attr.get("stop_id")
-        stop_name = get_stop_name(stop_id)
-        prediction_time = get_prediction(bus_id)
+        stop_id, stop_name = get_next_stop(bus["id"])
+        prediction_time = get_prediction(bus["id"])
 
-        # Draw route line
         shape_coords = get_route_shape(route_id)
-        folium.PolyLine(shape_coords, color="blue", weight=4, opacity=0.7).add_to(m)
+        if shape_coords:
+            folium.PolyLine(shape_coords, color="blue", weight=4, opacity=0.7).add_to(m)
 
-        # Plot all stops
         for lat, lon, name in get_route_stops(route_id):
             folium.CircleMarker(
                 location=[lat, lon],
@@ -175,7 +181,6 @@ if selected_bus_label != "None":
                 tooltip=name
             ).add_to(m)
 
-        # Show sidebar details
         st.sidebar.markdown("### 🛰️ Bus Details")
         st.sidebar.write(f"**Bus ID:** {bus['id']}")
         st.sidebar.write(f"**Route:** {route_id}")
@@ -183,5 +188,5 @@ if selected_bus_label != "None":
         st.sidebar.write(f"**Next Stop:** {stop_name}")
         st.sidebar.write(f"**Arrival Time:** {prediction_time if prediction_time else 'N/A'}")
 
-# --- Display the Map ---
+# --- Show Map ---
 st_folium(m, width="100%", height=800)
