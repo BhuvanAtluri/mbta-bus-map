@@ -8,11 +8,11 @@ st.set_page_config(page_title="MBTA Live Bus Tracker", layout="wide")
 st.title("🚍 MBTA Live Bus Tracker")
 st.markdown("Real-time MBTA bus locations with route filters, directions, and next stop tracking.")
 
-# MBTA API Key
+# --- MBTA API Key ---
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
 
-# Helper to call MBTA API with key
+# --- API Helper ---
 def fetch_mbta(endpoint, params=None):
     if params is None:
         params = {}
@@ -20,7 +20,7 @@ def fetch_mbta(endpoint, params=None):
     url = f"{BASE_URL}{endpoint}"
     return requests.get(url, params=params)
 
-# Convert bearing angle to arrow
+# --- Bearing to Arrow ---
 def bearing_to_arrow(bearing):
     if bearing is None:
         return "•"
@@ -33,11 +33,10 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-# Sidebar refresh control
+# --- Refresh & Filters ---
 refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
 st.sidebar.header("🔍 Filter Options")
 
-# --- Data Fetching ---
 @st.cache_data(ttl=refresh_interval)
 def get_bus_data():
     r = fetch_mbta("/vehicles", params={"filter[route_type]": 3})
@@ -62,8 +61,7 @@ def get_stop_name(stop_id):
 def get_prediction(vehicle_id):
     r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id})
     if r.status_code == 200 and r.json()["data"]:
-        pred = r.json()["data"][0]["attributes"]
-        return pred["arrival_time"]
+        return r.json()["data"][0]["attributes"]["arrival_time"]
     return None
 
 # --- Load Data ---
@@ -77,7 +75,7 @@ all_statuses = sorted({v["attributes"]["current_status"] for v in bus_data["data
 selected_routes = st.sidebar.multiselect("Select Routes", all_routes, default=all_routes)
 selected_statuses = st.sidebar.multiselect("Select Statuses", all_statuses, default=all_statuses)
 
-# --- Track a Specific Bus ---
+# --- Track Specific Bus ---
 bus_choices = {
     f'Bus {v["attributes"]["label"]} (Route {v["relationships"]["route"]["data"]["id"]})': v["id"]
     for v in bus_data["data"]
@@ -88,7 +86,7 @@ selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bu
 # --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Buses to Map with orange pill markers ---
+# --- Add Buses with Orange Dot + Arrow + Route Number ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
     route_id = vehicle["relationships"]["route"]["data"]["id"]
@@ -97,7 +95,7 @@ for vehicle in bus_data["data"]:
     if route_id not in selected_routes or status not in selected_statuses:
         continue
 
-    label = attr["label"] or "?"
+    label = route_id
     arrow = bearing_to_arrow(attr.get("bearing"))
 
     html = f"""
@@ -119,13 +117,13 @@ for vehicle in bus_data["data"]:
     folium.Marker(
         [attr["latitude"], attr["longitude"]],
         icon=folium.DivIcon(html=html),
-        tooltip=f"Route {route_id} | Bus {label} | {status}"
+        tooltip=f"Route {route_id} | Bus {attr['label'] or '?'} | {status}"
     ).add_to(m)
 
-# --- Display Map ---
-st_folium(m, width=1000, height=600)
+# --- Show Map ---
+st_folium(m, width=1400, height=1000)
 
-# --- Show Selected Bus Info ---
+# --- Show Bus Info in Sidebar ---
 if selected_bus_label != "None":
     bus_id = bus_choices[selected_bus_label]
     bus = next((v for v in bus_data["data"] if v["id"] == bus_id), None)
