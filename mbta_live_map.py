@@ -88,7 +88,7 @@ selected_bus_label = st.sidebar.selectbox("📍 Track a Bus", ["None"] + list(bu
 # --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Buses to Map ---
+# --- Add Buses to Map with orange pill markers ---
 for vehicle in bus_data["data"]:
     attr = vehicle["attributes"]
     route_id = vehicle["relationships"]["route"]["data"]["id"]
@@ -97,18 +97,28 @@ for vehicle in bus_data["data"]:
     if route_id not in selected_routes or status not in selected_statuses:
         continue
 
-    color = route_colors.get(route_id, "#0000FF")
     label = attr["label"] or "?"
     arrow = bearing_to_arrow(attr.get("bearing"))
 
+    html = f"""
+    <div style="
+        background-color: orange;
+        color: black;
+        border-radius: 12px;
+        padding: 2px 6px;
+        font-size: 11px;
+        font-weight: bold;
+        text-align: center;
+        white-space: nowrap;
+        box-shadow: 0 0 2px #333;
+    ">
+        {arrow} {label}
+    </div>
+    """
+
     folium.Marker(
         [attr["latitude"], attr["longitude"]],
-        icon=folium.DivIcon(html=f"""
-            <div style="font-size: 11px; font-weight: bold;
-                        color: {color}; text-align: center;">
-                {arrow} {label}
-            </div>
-        """),
+        icon=folium.DivIcon(html=html),
         tooltip=f"Route {route_id} | Bus {label} | {status}"
     ).add_to(m)
 
