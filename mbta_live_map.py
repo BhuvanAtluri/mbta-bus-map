@@ -19,6 +19,7 @@ def fetch_mbta(endpoint, params=None):
     url = f"{BASE_URL}{endpoint}"
     return requests.get(url, params=params)
 
+# --- Helpers ---
 def bearing_to_arrow(bearing):
     if bearing is None:
         return "•"
@@ -37,33 +38,41 @@ def get_stop_name(stop_id):
         return "Unknown"
     try:
         r = fetch_mbta(f"/stops/{stop_id}")
-        data = r.json().get("data", {})
-        return data.get("attributes", {}).get("name", "Unknown")
-    except Exception:
+        return r.json()["data"]["attributes"]["name"]
+    except:
         return "Unknown"
 
 def get_next_stop(vehicle_id):
     try:
-        r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id, "include": "stop"})
+        r = fetch_mbta("/predictions", params={
+            "filter[vehicle]": vehicle_id,
+            "include": "stop",
+            "sort": "arrival_time"
+        })
         data = r.json().get("data", [])
-        if data:
-            relationships = data[0].get("relationships", {})
-            stop_data = relationships.get("stop", {}).get("data", {})
-            stop_id = stop_data.get("id")
-            stop_name = get_stop_name(stop_id)
-            return stop_id, stop_name
+        for prediction in data:
+            stop_rel = prediction.get("relationships", {}).get("stop", {}).get("data", {})
+            stop_id = stop_rel.get("id")
+            if stop_id:
+                stop_name = get_stop_name(stop_id)
+                return stop_id, stop_name
     except Exception as e:
-        st.warning(f"Error getting stop: {e}")
+        st.warning(f"Prediction error for {vehicle_id}: {e}")
     return None, "Unknown"
 
-@st.cache_data(ttl=3600)
 def get_prediction(vehicle_id):
     try:
-        r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id})
-        if r.json().get("data"):
-            return r.json()["data"][0]["attributes"]["arrival_time"]
-    except:
-        pass
+        r = fetch_mbta("/predictions", params={
+            "filter[vehicle]": vehicle_id,
+            "sort": "arrival_time"
+        })
+        data = r.json().get("data", [])
+        for pred in data:
+            arrival = pred["attributes"].get("arrival_time")
+            if arrival:
+                return arrival
+    except Exception as e:
+        st.warning(f"Arrival time error for {vehicle_id}: {e}")
     return None
 
 @st.cache_data(ttl=3600)
@@ -91,11 +100,9 @@ def get_route_stops(route_id):
 
 # --- Sidebar UI ---
 st.sidebar.header("🎛️ Filters")
-
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-# Filtered route lists
 bus_routes = [str(i) for i in range(1, 21)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
 included_routes = bus_routes if mode == "Bus" else rail_routes
