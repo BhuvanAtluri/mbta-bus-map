@@ -7,8 +7,8 @@ import math
 
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("🚦 MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle to highlight its route and stops.")
+st.title(" MBTA Live Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops or hover over it on the map to see details")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
