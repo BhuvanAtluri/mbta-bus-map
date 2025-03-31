@@ -1,13 +1,14 @@
 import streamlit as st
 import requests
 import folium
+from folium.plugins import Fullscreen
 from streamlit_folium import st_folium
 from geopy.distance import geodesic
 import math
 
-st.set_page_config(page_title="MBTA Live Transit Tracker", layout="wide")
+st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("MBTA Live Tracker")
+st.title("MBTA Live Transit Tracker")
 st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops or hover over it on the map to see details.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
@@ -95,7 +96,6 @@ st.sidebar.header("Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-# Bus and rail route presets
 bus_routes = [str(i) for i in range(1, 21)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
 
@@ -108,7 +108,6 @@ def get_vehicle_data(route_type):
 
 vehicle_data = get_vehicle_data(route_type)
 
-# Handle dynamic bus route additions
 if mode == "Bus":
     active_routes = sorted(set(
         (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id")
@@ -117,14 +116,13 @@ if mode == "Bus":
     ))
     extra_routes = [r for r in active_routes if r not in bus_routes]
     if extra_routes:
-        st.sidebar.markdown("Want to view more routes?")
+        st.sidebar.markdown("By default only routes 1-20 are shown, so that the page remains responsive. Want to view more routes?")
         new_route = st.sidebar.selectbox("Add another live bus route:", ["None"] + extra_routes)
         if new_route != "None" and new_route not in bus_routes:
             bus_routes.append(new_route)
 
 included_routes = bus_routes if mode == "Bus" else rail_routes
 
-# Filter vehicles
 vehicles = [
     v for v in vehicle_data["data"]
     if (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id") in included_routes
@@ -148,10 +146,16 @@ for v in vehicles:
 
 selected_vehicle_label = st.sidebar.selectbox("Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# Map
-m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
+# Create Map (with better tile style)
+m = folium.Map(
+    location=[42.3601, -71.0589],
+    zoom_start=13,
+    tiles="CartoDB Positron"
+)
 
-# Add markers
+Fullscreen().add_to(m)
+
+# Add Markers
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
@@ -192,7 +196,7 @@ for v in vehicles:
         tooltip=tooltip
     ).add_to(m)
 
-# Highlight route/stops for selected vehicle
+# Highlight selected vehicle
 if selected_vehicle_label != "None":
     selected_id = vehicle_choices[selected_vehicle_label]
     vehicle = next((v for v in vehicles if v["id"] == selected_id), None)
@@ -205,15 +209,15 @@ if selected_vehicle_label != "None":
 
         shape = get_route_shape(route_id)
         if shape:
-            folium.PolyLine(shape, color="blue", weight=4, opacity=0.7).add_to(m)
+            folium.PolyLine(shape, color="blue", weight=4, opacity=0.7, line_cap='round').add_to(m)
 
         for lat, lon, name in get_route_stops(route_id):
             folium.CircleMarker(
                 location=[lat, lon],
-                radius=3,
-                color="gray",
+                radius=4,
+                color="#999",
                 fill=True,
-                fill_opacity=0.7,
+                fill_opacity=0.5,
                 tooltip=name
             ).add_to(m)
 
@@ -224,5 +228,4 @@ if selected_vehicle_label != "None":
         st.sidebar.write(f"Next Stop: {next_stop}")
         st.sidebar.write(f"Destination: {destination}")
 
-# Render map
 st_folium(m, width="100%", height=800)
