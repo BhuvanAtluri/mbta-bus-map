@@ -7,8 +7,8 @@ import math
 
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("MBTA Live Transit Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops.")
+st.title("🚦 MBTA Live Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle to highlight its route and stops.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -45,13 +45,21 @@ def bearing_between(p1, p2):
     bearing = math.degrees(math.atan2(x, y))
     return (bearing + 360) % 360
 
-def estimate_stop_and_destination(vehicle_latlon, route_id, vehicle_bearing):
+def estimate_stop_and_destination(vehicle_latlon, route_id, vehicle_bearing, status):
     try:
         stops = get_route_stops(route_id)
         if not stops:
             return "Unknown", "Unknown"
 
         destination_name = stops[-1][2]
+
+        if status == "STOPPED_AT":
+            # Just return the closest stop
+            nearest = min(
+                stops,
+                key=lambda stop: geodesic(vehicle_latlon, (stop[0], stop[1])).meters
+            )
+            return nearest[2], destination_name
 
         def is_ahead(stop):
             stop_point = (stop[0], stop[1])
@@ -88,7 +96,7 @@ st.sidebar.header("🎛️ Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-bus_routes = [str(i) for i in range(1, 51)]
+bus_routes = [str(i) for i in range(1, 31)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
 included_routes = bus_routes if mode == "Bus" else rail_routes
 
@@ -124,10 +132,10 @@ for v in vehicles:
 
 selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# --- Map ---
+# --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Markers ---
+# --- Add Vehicle Markers ---
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
@@ -142,7 +150,7 @@ for v in vehicles:
     label = route_id
 
     vehicle_latlon = (attr["latitude"], attr["longitude"])
-    stop_name, _ = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0))
+    stop_name, _ = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0), attr["current_status"])
 
     tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']} | {stop_name}"
 
@@ -177,7 +185,7 @@ if selected_vehicle_label != "None":
         attr = vehicle["attributes"]
         route_id = (vehicle["relationships"]["route"]["data"] or {}).get("id")
         vehicle_latlon = (attr["latitude"], attr["longitude"])
-        next_stop, destination = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0))
+        next_stop, destination = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0), attr["current_status"])
 
         shape = get_route_shape(route_id)
         if shape:
