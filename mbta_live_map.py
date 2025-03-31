@@ -6,8 +6,8 @@ from geopy.distance import geodesic
 
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops.")
+st.title("🚦 MBTA Live Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle to highlight its route and stops.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -17,14 +17,6 @@ def fetch_mbta(endpoint, params=None):
         params = {}
     params["api_key"] = API_KEY
     return requests.get(f"{BASE_URL}{endpoint}", params=params)
-
-@st.cache_data(ttl=3600)
-def get_stop_name(stop_id):
-    try:
-        r = fetch_mbta(f"/stops/{stop_id}")
-        return r.json()["data"]["attributes"]["name"]
-    except:
-        return "Unknown"
 
 @st.cache_data(ttl=3600)
 def get_route_shape(route_id):
@@ -49,21 +41,22 @@ def get_route_stops(route_id):
     except:
         return []
 
-def estimate_next_stop_and_destination(vehicle_latlon, route_id):
+def estimate_stop_and_destination(vehicle_latlon, route_id):
     try:
         stops = get_route_stops(route_id)
         if not stops:
             return "Unknown", "Unknown"
 
-        next_stop = min(
+        # Sort by distance
+        sorted_stops = sorted(
             stops,
             key=lambda stop: geodesic(vehicle_latlon, (stop[0], stop[1])).meters
         )
-        next_stop_name = next_stop[2]
-        destination_name = stops[-1][2]  # Last stop in the route
-        return next_stop_name, destination_name
-    except Exception as e:
-        st.warning(f"Error estimating stop/destination: {e}")
+
+        next_stop = sorted_stops[0][2]
+        destination = sorted_stops[-1][2]
+        return next_stop, destination
+    except:
         return "Unknown", "Unknown"
 
 def bearing_to_arrow(bearing):
@@ -117,7 +110,7 @@ for v in vehicles:
 
 selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# --- Create Map ---
+# --- Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
 # --- Add Vehicle Markers ---
@@ -134,7 +127,10 @@ for v in vehicles:
     arrow = bearing_to_arrow(attr.get("bearing"))
     label = route_id
 
-    tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']}"
+    vehicle_latlon = (attr["latitude"], attr["longitude"])
+    stop_name, _ = estimate_stop_and_destination(vehicle_latlon, route_id)
+
+    tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']} | {stop_name}"
 
     html = f"""
     <div style="
@@ -158,7 +154,7 @@ for v in vehicles:
         tooltip=tooltip
     ).add_to(m)
 
-# --- Highlight Route & Stops for Selected Vehicle ---
+# --- Highlight Route + Stops for Selected Vehicle ---
 if selected_vehicle_label != "None":
     selected_id = vehicle_choices[selected_vehicle_label]
     vehicle = next((v for v in vehicles if v["id"] == selected_id), None)
@@ -167,7 +163,7 @@ if selected_vehicle_label != "None":
         attr = vehicle["attributes"]
         route_id = (vehicle["relationships"]["route"]["data"] or {}).get("id")
         vehicle_latlon = (attr["latitude"], attr["longitude"])
-        next_stop, destination = estimate_next_stop_and_destination(vehicle_latlon, route_id)
+        next_stop, destination = estimate_stop_and_destination(vehicle_latlon, route_id)
 
         shape = get_route_shape(route_id)
         if shape:
