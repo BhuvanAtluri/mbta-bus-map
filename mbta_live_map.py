@@ -2,11 +2,12 @@ import streamlit as st
 import requests
 import folium
 from streamlit_folium import st_folium
+from geopy.distance import geodesic
 
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
 st.title("MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle on the left to highlight its route and stops.")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -24,34 +25,6 @@ def get_stop_name(stop_id):
         return r.json()["data"]["attributes"]["name"]
     except:
         return "Unknown"
-
-def get_next_stop_and_headsign(vehicle_id):
-    try:
-        r = fetch_mbta("/predictions", params={
-            "filter[vehicle]": vehicle_id,
-            "include": "stop",
-            "sort": "arrival_time"
-        })
-        data = r.json().get("data", [])
-        for p in data:
-            stop_id = p.get("relationships", {}).get("stop", {}).get("data", {}).get("id")
-            headsign = p.get("attributes", {}).get("headsign")
-            stop_name = get_stop_name(stop_id) if stop_id else "Unknown"
-            return stop_id or "Unknown", stop_name, headsign or "N/A"
-    except Exception as e:
-        st.warning(f"Prediction error for vehicle {vehicle_id}: {e}")
-    return "Unknown", "Unknown", "N/A"
-
-def get_prediction(vehicle_id):
-    try:
-        r = fetch_mbta("/predictions", params={"filter[vehicle]": vehicle_id, "sort": "arrival_time"})
-        for p in r.json().get("data", []):
-            arrival = p["attributes"].get("arrival_time")
-            if arrival:
-                return arrival
-    except:
-        pass
-    return None
 
 @st.cache_data(ttl=3600)
 def get_route_shape(route_id):
@@ -75,6 +48,23 @@ def get_route_stops(route_id):
         ]
     except:
         return []
+
+def estimate_next_stop_and_destination(vehicle_latlon, route_id):
+    try:
+        stops = get_route_stops(route_id)
+        if not stops:
+            return "Unknown", "Unknown"
+
+        next_stop = min(
+            stops,
+            key=lambda stop: geodesic(vehicle_latlon, (stop[0], stop[1])).meters
+        )
+        next_stop_name = next_stop[2]
+        destination_name = stops[-1][2]  # Last stop in the route
+        return next_stop_name, destination_name
+    except Exception as e:
+        st.warning(f"Error estimating stop/destination: {e}")
+        return "Unknown", "Unknown"
 
 def bearing_to_arrow(bearing):
     if bearing is None:
@@ -127,10 +117,10 @@ for v in vehicles:
 
 selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# --- Map ---
+# --- Create Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add vehicle markers ---
+# --- Add Vehicle Markers ---
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
@@ -144,13 +134,7 @@ for v in vehicles:
     arrow = bearing_to_arrow(attr.get("bearing"))
     label = route_id
 
-    # Headsign (destination) — only if selected
-    if is_selected:
-        _, _, headsign = get_next_stop_and_headsign(vehicle_id)
-    else:
-        headsign = "..."
-
-    tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']} | Dest: {headsign}"
+    tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']}"
 
     html = f"""
     <div style="
@@ -174,7 +158,7 @@ for v in vehicles:
         tooltip=tooltip
     ).add_to(m)
 
-# --- Highlight selected route + stops ---
+# --- Highlight Route & Stops for Selected Vehicle ---
 if selected_vehicle_label != "None":
     selected_id = vehicle_choices[selected_vehicle_label]
     vehicle = next((v for v in vehicles if v["id"] == selected_id), None)
@@ -182,8 +166,8 @@ if selected_vehicle_label != "None":
     if vehicle:
         attr = vehicle["attributes"]
         route_id = (vehicle["relationships"]["route"]["data"] or {}).get("id")
-        stop_id, stop_name, headsign = get_next_stop_and_headsign(selected_id)
-        prediction = get_prediction(selected_id)
+        vehicle_latlon = (attr["latitude"], attr["longitude"])
+        next_stop, destination = estimate_next_stop_and_destination(vehicle_latlon, route_id)
 
         shape = get_route_shape(route_id)
         if shape:
@@ -203,9 +187,8 @@ if selected_vehicle_label != "None":
         st.sidebar.write(f"**Vehicle ID:** {selected_id}")
         st.sidebar.write(f"**Route:** {route_id}")
         st.sidebar.write(f"**Current Status:** {attr['current_status']}")
-        st.sidebar.write(f"**Next Stop:** {stop_name}")
-        st.sidebar.write(f"**Destination:** {headsign}")
-        st.sidebar.write(f"**Arrival Time:** {prediction or 'N/A'}")
+        st.sidebar.write(f"**Next Stop:** {next_stop}")
+        st.sidebar.write(f"**Destination:** {destination}")
 
-# --- Render map ---
+# --- Show Map ---
 st_folium(m, width="100%", height=800)
