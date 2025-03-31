@@ -6,7 +6,7 @@ from streamlit_folium import st_folium
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
 st.title("🚦 MBTA Live Tracker")
-st.markdown("Track buses and trains in real-time.")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle on the left to highlight its route and stops.")
 
 # --- MBTA API ---
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
@@ -19,7 +19,6 @@ def fetch_mbta(endpoint, params=None):
     url = f"{BASE_URL}{endpoint}"
     return requests.get(url, params=params)
 
-# --- Helpers ---
 def bearing_to_arrow(bearing):
     if bearing is None:
         return "•"
@@ -56,8 +55,8 @@ def get_next_stop(vehicle_id):
             if stop_id:
                 stop_name = get_stop_name(stop_id)
                 return stop_id, stop_name
-    except Exception as e:
-        st.warning(f"Prediction error for {vehicle_id}: {e}")
+    except:
+        pass
     return None, "Unknown"
 
 def get_prediction(vehicle_id):
@@ -71,8 +70,8 @@ def get_prediction(vehicle_id):
             arrival = pred["attributes"].get("arrival_time")
             if arrival:
                 return arrival
-    except Exception as e:
-        st.warning(f"Arrival time error for {vehicle_id}: {e}")
+    except:
+        pass
     return None
 
 @st.cache_data(ttl=3600)
@@ -98,7 +97,7 @@ def get_route_stops(route_id):
     except:
         return []
 
-# --- Sidebar UI ---
+# --- Sidebar Filters ---
 st.sidebar.header("🎛️ Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
@@ -142,12 +141,16 @@ selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] +
 # --- Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add vehicle markers ---
+# --- Plot All Vehicles ---
 for v in vehicles:
     attr = v["attributes"]
+    vehicle_id = v["id"]
     route_id = (v.get("relationships", {}).get("route", {}).get("data", {}) or {}).get("id")
     if route_id not in selected_routes or attr["current_status"] not in selected_statuses:
         continue
+
+    is_selected = (vehicle_id == vehicle_choices.get(selected_vehicle_label))
+    color = "red" if is_selected else "orange"
 
     arrow = bearing_to_arrow(attr.get("bearing"))
     label = route_id
@@ -155,7 +158,7 @@ for v in vehicles:
 
     html = f"""
     <div style="
-        background-color: orange;
+        background-color: {color};
         color: black;
         border-radius: 12px;
         padding: 2px 6px;
@@ -175,16 +178,16 @@ for v in vehicles:
         tooltip=tooltip
     ).add_to(m)
 
-# --- Highlight selected vehicle route ---
+# --- If a vehicle is selected, highlight its route and stops ---
 if selected_vehicle_label != "None":
-    vehicle_id = vehicle_choices[selected_vehicle_label]
-    vehicle = next((v for v in vehicles if v["id"] == vehicle_id), None)
+    selected_id = vehicle_choices[selected_vehicle_label]
+    vehicle = next((v for v in vehicles if v["id"] == selected_id), None)
 
     if vehicle:
         attr = vehicle["attributes"]
         route_id = (vehicle["relationships"]["route"]["data"] or {}).get("id")
-        stop_id, stop_name = get_next_stop(vehicle_id)
-        prediction = get_prediction(vehicle_id)
+        stop_id, stop_name = get_next_stop(selected_id)
+        prediction = get_prediction(selected_id)
 
         shape = get_route_shape(route_id)
         if shape:
@@ -201,11 +204,11 @@ if selected_vehicle_label != "None":
             ).add_to(m)
 
         st.sidebar.markdown("### 🛰 Vehicle Info")
-        st.sidebar.write(f"**Vehicle ID:** {vehicle_id}")
+        st.sidebar.write(f"**Vehicle ID:** {selected_id}")
         st.sidebar.write(f"**Route:** {route_id}")
         st.sidebar.write(f"**Current Status:** {attr['current_status']}")
         st.sidebar.write(f"**Next Stop:** {stop_name}")
         st.sidebar.write(f"**Arrival Time:** {prediction or 'N/A'}")
 
-# --- Show Map ---
+# --- Show the map ---
 st_folium(m, width="100%", height=800)
