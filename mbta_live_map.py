@@ -4,10 +4,10 @@ import folium
 from streamlit_folium import st_folium
 from geopy.distance import geodesic
 
-st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
+st.set_page_config(page_title="MBTA Live Transit Tracker", layout="wide")
 
-st.title("🚦 MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle to highlight its route and stops.")
+st.title("MBTA Live Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle from the dropdown on the left to highlight its route and stops.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -74,7 +74,7 @@ st.sidebar.header("🎛️ Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-bus_routes = [str(i) for i in range(1, 21)]
+bus_routes = [str(i) for i in range(1, 71)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
 included_routes = bus_routes if mode == "Bus" else rail_routes
 
@@ -108,7 +108,7 @@ for v in vehicles:
         label = v["attributes"].get("label", "?")
         vehicle_choices[f"{label} (Route {route_id})"] = v["id"]
 
-selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
+selected_vehicle_label = st.sidebar.selectbox("Track a Vehicle (highlighted via a red dot)", ["None"] + list(vehicle_choices.keys()))
 
 # --- Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
