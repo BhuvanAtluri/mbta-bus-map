@@ -3,11 +3,12 @@ import requests
 import folium
 from streamlit_folium import st_folium
 from geopy.distance import geodesic
+import math
 
-st.set_page_config(page_title="MBTA Live Transit Tracker", layout="wide")
+st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle from the dropdown on the left to highlight its route and stops.")
+st.title("MBTA Live Transit Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -20,42 +21,55 @@ def fetch_mbta(endpoint, params=None):
 
 @st.cache_data(ttl=3600)
 def get_route_shape(route_id):
-    try:
-        r = fetch_mbta("/shapes", params={"filter[route]": route_id, "page[limit]": 1000})
-        return [
-            (s["attributes"]["shape_pt_lat"], s["attributes"]["shape_pt_lon"])
-            for s in r.json()["data"]
-            if s["attributes"].get("shape_pt_lat") and s["attributes"].get("shape_pt_lon")
-        ]
-    except:
-        return []
+    r = fetch_mbta("/shapes", params={"filter[route]": route_id, "page[limit]": 1000})
+    return [
+        (s["attributes"]["shape_pt_lat"], s["attributes"]["shape_pt_lon"])
+        for s in r.json()["data"]
+        if s["attributes"].get("shape_pt_lat") and s["attributes"].get("shape_pt_lon")
+    ]
 
 @st.cache_data(ttl=3600)
 def get_route_stops(route_id):
-    try:
-        r = fetch_mbta("/stops", params={"filter[route]": route_id})
-        return [
-            (s["attributes"]["latitude"], s["attributes"]["longitude"], s["attributes"]["name"])
-            for s in r.json()["data"]
-        ]
-    except:
-        return []
+    r = fetch_mbta("/stops", params={"filter[route]": route_id})
+    return [
+        (s["attributes"]["latitude"], s["attributes"]["longitude"], s["attributes"]["name"])
+        for s in r.json()["data"]
+    ]
 
-def estimate_stop_and_destination(vehicle_latlon, route_id):
+def bearing_between(p1, p2):
+    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
+    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
+    d_lon = lon2 - lon1
+    x = math.sin(d_lon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(d_lon)
+    bearing = math.degrees(math.atan2(x, y))
+    return (bearing + 360) % 360
+
+def estimate_stop_and_destination(vehicle_latlon, route_id, vehicle_bearing):
     try:
         stops = get_route_stops(route_id)
         if not stops:
             return "Unknown", "Unknown"
 
-        # Sort by distance
-        sorted_stops = sorted(
-            stops,
-            key=lambda stop: geodesic(vehicle_latlon, (stop[0], stop[1])).meters
+        destination_name = stops[-1][2]
+
+        def is_ahead(stop):
+            stop_point = (stop[0], stop[1])
+            bearing_to_stop = bearing_between(vehicle_latlon, stop_point)
+            angle_diff = abs(vehicle_bearing - bearing_to_stop)
+            angle_diff = 360 - angle_diff if angle_diff > 180 else angle_diff
+            return angle_diff <= 90
+
+        directional_stops = [s for s in stops if is_ahead(s)]
+        if not directional_stops:
+            directional_stops = stops
+
+        next_stop = min(
+            directional_stops,
+            key=lambda s: geodesic(vehicle_latlon, (s[0], s[1])).meters
         )
 
-        next_stop = sorted_stops[0][2]
-        destination = sorted_stops[-1][2]
-        return next_stop, destination
+        return next_stop[2], destination_name
     except:
         return "Unknown", "Unknown"
 
@@ -74,7 +88,7 @@ st.sidebar.header("🎛️ Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-bus_routes = [str(i) for i in range(1, 71)]
+bus_routes = [str(i) for i in range(1, 51)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
 included_routes = bus_routes if mode == "Bus" else rail_routes
 
@@ -108,12 +122,12 @@ for v in vehicles:
         label = v["attributes"].get("label", "?")
         vehicle_choices[f"{label} (Route {route_id})"] = v["id"]
 
-selected_vehicle_label = st.sidebar.selectbox("Track a Vehicle (highlighted via a red dot)", ["None"] + list(vehicle_choices.keys()))
+selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
 # --- Map ---
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Vehicle Markers ---
+# --- Add Markers ---
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
@@ -128,7 +142,7 @@ for v in vehicles:
     label = route_id
 
     vehicle_latlon = (attr["latitude"], attr["longitude"])
-    stop_name, _ = estimate_stop_and_destination(vehicle_latlon, route_id)
+    stop_name, _ = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0))
 
     tooltip = f"Route {route_id} | Vehicle {attr.get('label')} | {attr['current_status']} | {stop_name}"
 
@@ -163,7 +177,7 @@ if selected_vehicle_label != "None":
         attr = vehicle["attributes"]
         route_id = (vehicle["relationships"]["route"]["data"] or {}).get("id")
         vehicle_latlon = (attr["latitude"], attr["longitude"])
-        next_stop, destination = estimate_stop_and_destination(vehicle_latlon, route_id)
+        next_stop, destination = estimate_stop_and_destination(vehicle_latlon, route_id, attr.get("bearing", 0))
 
         shape = get_route_shape(route_id)
         if shape:
