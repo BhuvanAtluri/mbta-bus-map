@@ -8,7 +8,7 @@ import math
 
 st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
 
-st.title("MBTA Live Transit Tracker")
+st.title("MBTA Live Tracker")
 st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops or hover over it on the map to see details.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
@@ -93,20 +93,43 @@ def bearing_to_arrow(bearing):
 
 # Sidebar
 st.sidebar.header("Filters")
-mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
-route_type = 3 if mode == "Bus" else 1
+mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Subway", "Green Line", "Commuter Rail"])
 
+# Map mode to route types
+mode_to_route_type = {
+    "Bus": [3],
+    "Subway": [1],
+    "Green Line": [0],
+    "Commuter Rail": [2]
+}
+route_types = mode_to_route_type[mode]
+
+# Preset routes
 bus_routes = [str(i) for i in range(1, 21)]
-rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
+subway_routes = ["Red", "Orange", "Blue"]
+green_routes = ["Green-B", "Green-C", "Green-D", "Green-E"]
+commuter_routes = ["CR-Fitchburg", "CR-Franklin", "CR-Worcester", "CR-Newburyport", "CR-Needham", "CR-Lowell", "CR-Providence"]  # Add more as needed
+
+if mode == "Bus":
+    included_routes = bus_routes
+elif mode == "Subway":
+    included_routes = subway_routes
+elif mode == "Green Line":
+    included_routes = green_routes
+else:
+    included_routes = commuter_routes
 
 refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
 
 @st.cache_data(ttl=refresh_interval)
-def get_vehicle_data(route_type):
-    r = fetch_mbta("/vehicles", params={"filter[route_type]": route_type})
-    return r.json()
+def get_vehicle_data(route_types):
+    all_data = []
+    for rt in route_types:
+        r = fetch_mbta("/vehicles", params={"filter[route_type]": rt})
+        all_data.extend(r.json().get("data", []))
+    return {"data": all_data}
 
-vehicle_data = get_vehicle_data(route_type)
+vehicle_data = get_vehicle_data(route_types)
 
 if mode == "Bus":
     active_routes = sorted(set(
@@ -116,13 +139,13 @@ if mode == "Bus":
     ))
     extra_routes = [r for r in active_routes if r not in bus_routes]
     if extra_routes:
-        st.sidebar.markdown("By default only routes 1-20 are shown, so that the page remains responsive. Want to view more routes?")
+        st.sidebar.markdown("Want to view more routes?")
         new_route = st.sidebar.selectbox("Add another live bus route:", ["None"] + extra_routes)
         if new_route != "None" and new_route not in bus_routes:
             bus_routes.append(new_route)
+    included_routes = bus_routes
 
-included_routes = bus_routes if mode == "Bus" else rail_routes
-
+# Filter vehicles
 vehicles = [
     v for v in vehicle_data["data"]
     if (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id") in included_routes
@@ -146,16 +169,11 @@ for v in vehicles:
 
 selected_vehicle_label = st.sidebar.selectbox("Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# Create Map (with better tile style)
-m = folium.Map(
-    location=[42.3601, -71.0589],
-    zoom_start=13,
-    tiles="CartoDB Positron"
-)
-
+# Create Map
+m = folium.Map(location=[42.3601, -71.0589], zoom_start=13, tiles="CartoDB Positron")
 Fullscreen().add_to(m)
 
-# Add Markers
+# Add markers
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
