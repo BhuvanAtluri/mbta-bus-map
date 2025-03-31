@@ -5,10 +5,10 @@ from streamlit_folium import st_folium
 from geopy.distance import geodesic
 import math
 
-st.set_page_config(page_title="MBTA Live Tracker", layout="wide")
+st.set_page_config(page_title="MBTA Live Transit Tracker", layout="wide")
 
-st.title(" MBTA Live Tracker")
-st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops or hover over it on the map to see details")
+st.title("MBTA Live Tracker")
+st.markdown("Track MBTA buses and trains in real-time. Select a vehicle via the dropdown on the left to highlight its route and stops or hover over it on the map to see details.")
 
 API_KEY = "e83ca4904d974faa97355cfcedb2afae"
 BASE_URL = "https://api-v3.mbta.com"
@@ -54,7 +54,6 @@ def estimate_stop_and_destination(vehicle_latlon, route_id, vehicle_bearing, sta
         destination_name = stops[-1][2]
 
         if status == "STOPPED_AT":
-            # Just return the closest stop
             nearest = min(
                 stops,
                 key=lambda stop: geodesic(vehicle_latlon, (stop[0], stop[1])).meters
@@ -91,14 +90,14 @@ def bearing_to_arrow(bearing):
             return arrow
     return "↑"
 
-# --- Sidebar Filters ---
-st.sidebar.header("🎛️ Filters")
+# Sidebar
+st.sidebar.header("Filters")
 mode = st.sidebar.selectbox("Transit Mode", ["Bus", "Rail"])
 route_type = 3 if mode == "Bus" else 1
 
-bus_routes = [str(i) for i in range(1, 31)]
+# Bus and rail route presets
+bus_routes = [str(i) for i in range(1, 21)]
 rail_routes = ["Red", "Orange", "Blue", "Green-B", "Green-C", "Green-D", "Green-E"]
-included_routes = bus_routes if mode == "Bus" else rail_routes
 
 refresh_interval = st.sidebar.slider("Refresh every (seconds):", 10, 60, 30)
 
@@ -109,6 +108,23 @@ def get_vehicle_data(route_type):
 
 vehicle_data = get_vehicle_data(route_type)
 
+# Handle dynamic bus route additions
+if mode == "Bus":
+    active_routes = sorted(set(
+        (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id")
+        for v in vehicle_data["data"]
+        if (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id")
+    ))
+    extra_routes = [r for r in active_routes if r not in bus_routes]
+    if extra_routes:
+        st.sidebar.markdown("Want to view more routes?")
+        new_route = st.sidebar.selectbox("Add another live bus route:", ["None"] + extra_routes)
+        if new_route != "None" and new_route not in bus_routes:
+            bus_routes.append(new_route)
+
+included_routes = bus_routes if mode == "Bus" else rail_routes
+
+# Filter vehicles
 vehicles = [
     v for v in vehicle_data["data"]
     if (v.get("relationships", {}).get("route", {}).get("data") or {}).get("id") in included_routes
@@ -130,12 +146,12 @@ for v in vehicles:
         label = v["attributes"].get("label", "?")
         vehicle_choices[f"{label} (Route {route_id})"] = v["id"]
 
-selected_vehicle_label = st.sidebar.selectbox("📍 Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
+selected_vehicle_label = st.sidebar.selectbox("Track a Vehicle", ["None"] + list(vehicle_choices.keys()))
 
-# --- Create Map ---
+# Map
 m = folium.Map(location=[42.3601, -71.0589], zoom_start=13)
 
-# --- Add Vehicle Markers ---
+# Add markers
 for v in vehicles:
     attr = v["attributes"]
     vehicle_id = v["id"]
@@ -176,7 +192,7 @@ for v in vehicles:
         tooltip=tooltip
     ).add_to(m)
 
-# --- Highlight Route + Stops for Selected Vehicle ---
+# Highlight route/stops for selected vehicle
 if selected_vehicle_label != "None":
     selected_id = vehicle_choices[selected_vehicle_label]
     vehicle = next((v for v in vehicles if v["id"] == selected_id), None)
@@ -201,12 +217,12 @@ if selected_vehicle_label != "None":
                 tooltip=name
             ).add_to(m)
 
-        st.sidebar.markdown("### 🛰 Vehicle Info")
-        st.sidebar.write(f"**Vehicle ID:** {selected_id}")
-        st.sidebar.write(f"**Route:** {route_id}")
-        st.sidebar.write(f"**Current Status:** {attr['current_status']}")
-        st.sidebar.write(f"**Next Stop:** {next_stop}")
-        st.sidebar.write(f"**Destination:** {destination}")
+        st.sidebar.markdown("Vehicle Info")
+        st.sidebar.write(f"Vehicle ID: {selected_id}")
+        st.sidebar.write(f"Route: {route_id}")
+        st.sidebar.write(f"Status: {attr['current_status']}")
+        st.sidebar.write(f"Next Stop: {next_stop}")
+        st.sidebar.write(f"Destination: {destination}")
 
-# --- Show Map ---
+# Render map
 st_folium(m, width="100%", height=800)
